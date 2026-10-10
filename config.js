@@ -15,7 +15,7 @@
 // DEFAULT_BUILD is what the Build field shows to a tester who has not typed
 // one before. Change it here when a new build goes out.
 window.QA_CONFIG = {
-  SUPABASE_URL: 'https://YOUR-PROJECT-REF.supabase.co',
-  SUPABASE_ANON_KEY: 'PASTE-THE-ANON-PUBLIC-KEY-HERE',
+  SUPABASE_URL: 'https://ymvupemuaqideriiilcn.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltdnVwZW11YXFpZGVyaWlpbGNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2MjA4ODEsImV4cCI6MjEwNzE5Njg4MX0.PNY0kJQI9205XkYNEN6mNcufyhLOU7-KFMZLhyOvPWc',
   DEFAULT_BUILD: 'FINAL-PREVIEW-3'
 };
