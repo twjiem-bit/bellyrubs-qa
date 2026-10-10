@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Bellyrubs Screen Tests</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="qa.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="qa-shared.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Bellyrubs · screen-by-screen testing · FINAL-PREVIEW builds</span>
+    <h1>Bellyrubs Screen Tests</h1>
+    <p>One entry per screenshot: drop the picture, say which phone and screen, write what is wrong. Cowork reads these straight from the page to cut the fix round, and marks each one fixed when it is.</p>
+    <div class="counts" id="counts"><span class="pill now">Loading…</span></div>
+  </header>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <form class="entry" id="entry" autocomplete="off">
+    <div class="top">
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add a screenshot: click to choose, drag a file here, or paste">
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
+        <img id="preview" alt="" hidden>
+        <div class="hint" id="hint"><b>Drop the screenshot here</b><span>or tap to choose, or paste it (Ctrl+V)</span></div>
+      </div>
+      <div class="fields">
+        <div class="row">
+          <label class="f">Your name<input type="text" id="tester" placeholder="so Cowork knows who saw it" maxlength="60" autocomplete="name"></label>
+          <label class="f">Tester passcode<input type="password" id="passcode" placeholder="from the founder" autocomplete="off"></label>
+        </div>
+        <div class="row">
+          <label class="f">Phone
+            <div class="seg" id="phone" role="group" aria-label="Phone">
+              <button type="button" data-v="android" aria-pressed="true">Android</button>
+              <button type="button" data-v="iphone" aria-pressed="false">iPhone</button>
+            </div>
+          </label>
+          <label class="f">Signed in as
+            <div class="seg" id="role" role="group" aria-label="Signed in as">
+              <button type="button" data-v="customer" aria-pressed="true">Customer</button>
+              <button type="button" data-v="partner" aria-pressed="false">Walker / Sitter</button>
+              <button type="button" data-v="admin" aria-pressed="false">Admin</button>
+            </div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="f">Screen (the words on it)<input type="text" id="screen" placeholder="e.g. Your walks, Cart, Pay" maxlength="200"></label>
+          <label class="f">Step on the sitting page<input type="text" id="step" placeholder="optional, e.g. 14" inputmode="numeric" maxlength="40"></label>
+        </div>
+        <label class="f">What is wrong<textarea id="note" placeholder="What you expected, what you saw. Rupee figures and the exact text help." maxlength="5000"></textarea></label>
+        <div class="row">
+          <label class="f">How bad
+            <div class="seg sev" id="sev" role="group" aria-label="How bad">
+              <button type="button" data-v="blocks" aria-pressed="false">Blocks me</button>
+              <button type="button" data-v="wrong" aria-pressed="true">Wrong</button>
+              <button type="button" data-v="looks" aria-pressed="false">Looks off</button>
+            </div>
+          </label>
+          <label class="f">Build<input type="text" id="build" value="FINAL-PREVIEW-3" maxlength="60"></label>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="status" id="formStatus" role="status">Ready.</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button type="button" class="btn quiet" id="clearBtn">Clear</button>
+        <button type="submit" class="btn primary" id="saveBtn" disabled>Save finding</button>
+      </div>
+    </div>
+  </form>
+
+  <section style="display:grid;gap:14px">
+    <div class="toolbar">
+      <h2>Your findings from this phone</h2>
+      <div class="filters" id="filters">
+        <button type="button" class="chip" data-f="phone:android" aria-pressed="false">Android</button>
+        <button type="button" class="chip" data-f="phone:iphone" aria-pressed="false">iPhone</button>
+        <button type="button" class="btn quiet" id="forgetBtn" title="Removes this list from this phone only; the findings themselves stay saved">Forget this list</button>
+      </div>
+    </div>
+    <div class="list" id="list">
+      <div class="empty" id="empty"><b>No findings yet.</b><span>The first one you save appears here, newest first.</span></div>
+    </div>
+    <p class="foot-note">This list is kept on this phone only. Cowork sees every tester's findings on the admin page.</p>
+  </section>
+</div>
+
+<div class="lightbox" id="lightbox" hidden><img id="lightImg" alt="Screenshot, full size"><div class="cap" id="lightCap"></div></div>
+
+<script>
+(function(){
+  'use strict';
+  const Q = window.QA;
+  const { $, SEV, STATUS, PHONE, ROLE, seg, setSeg, wireSeg, esc, when, pill, readLocal, writeLocal, readJSON, publicUrl, plain } = Q;
+
+  let mine = readJSON('qa.mine', []);   // this browser's own submissions, newest first
+  let pending = null;                   // the chosen File/Blob for the entry form
+  let filter = { phone: null };
+
+  function setStatus(msg, bad){ const s = $('formStatus'); s.textContent = msg; s.classList.toggle('bad', !!bad); }
+  function notice(msg, bad){ const n = $('notice'); n.textContent = msg || ''; n.hidden = !msg; n.classList.toggle('bad', !!bad); }
+
+  // ---------- image intake
+  function takeFile(file){
+    if (!Q.isImage(file)) { setStatus('That is not a PNG, JPEG or WebP image.', true); return; }
+    pending = file;
+    const url = URL.createObjectURL(file);
+    const img = $('preview'); img.src = url; img.hidden = false; $('hint').hidden = true;
+    setStatus('Screenshot ready (' + Math.round(file.size / 1024) + ' KB).');
+    updateSave();
+  }
+  $('drop').addEventListener('click', () => $('file').click());
+  $('drop').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+  $('file').addEventListener('change', e => takeFile(e.target.files && e.target.files[0]));
+  ['dragenter','dragover'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave','drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+  $('drop').addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) takeFile(f); });
+  document.addEventListener('paste', e => {
+    const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+    for (const it of items) { if (it.type && it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) { e.preventDefault(); takeFile(f); return; } } }
+  });
+
+  // ---------- form
+  wireSeg($('phone')); wireSeg($('role')); wireSeg($('sev'));
+  function updateSave(){
+    $('saveBtn').disabled = !(pending && $('note').value.trim() && $('tester').value.trim() && $('passcode').value.trim() && Q.configured());
+  }
+  ['note','tester','passcode'].forEach(id => $(id).addEventListener('input', updateSave));
+  $('build').value = readLocal('qa.build') || Q.cfg.DEFAULT_BUILD || 'FINAL-PREVIEW-3';
+  $('tester').value = readLocal('qa.tester') || '';
+  $('passcode').value = readLocal('qa.passcode') || '';
+  const savedPhone = readLocal('qa.phone'); if (savedPhone && PHONE[savedPhone]) setSeg($('phone'), savedPhone);
+  $('build').addEventListener('change', () => writeLocal('qa.build', $('build').value.trim()));
+  $('tester').addEventListener('change', () => writeLocal('qa.tester', $('tester').value.trim()));
+  $('phone').addEventListener('click', () => writeLocal('qa.phone', seg($('phone'))));
+
+  function clearForm(keepMeta){
+    pending = null; $('file').value = ''; $('preview').hidden = true; $('preview').removeAttribute('src'); $('hint').hidden = false;
+    $('note').value = ''; $('screen').value = ''; $('step').value = '';
+    if (!keepMeta) { setSeg($('sev'), 'wrong'); }
+    setStatus('Ready.'); updateSave();
+  }
+  $('clearBtn').addEventListener('click', () => clearForm(false));
+
+  $('entry').addEventListener('submit', async e => {
+    e.preventDefault();
+    const client = Q.getClient();
+    if (!client) { setStatus(Q.configured() ? 'The page could not start (no Supabase library). Reload once.' : 'This page is not switched on yet: config.js has no project URL and key.', true); return; }
+    const tester = $('tester').value.trim(), passcode = $('passcode').value.trim();
+    if (!tester) { setStatus('Type your name first.', true); $('tester').focus(); return; }
+    if (!passcode) { setStatus('Type the tester passcode first.', true); $('passcode').focus(); return; }
+    if (!pending) { setStatus('Add the screenshot first.', true); return; }
+    if (!$('note').value.trim()) { setStatus('Write what is wrong first.', true); $('note').focus(); return; }
+    const btn = $('saveBtn'); btn.disabled = true;
+    try {
+      setStatus('Uploading the screenshot…');
+      const blob = await Q.shrinkIfLarge(pending);
+      const type = blob.type || 'image/png';
+      const path = Q.randomName(type);
+      const up = await client.storage.from(Q.BUCKET).upload(path, blob, { contentType: type, upsert: false, cacheControl: '31536000' });
+      if (up.error) throw up.error;
+
+      setStatus('Saving the finding…');
+      const body = {
+        passcode, tester,
+        phone: seg($('phone')) || 'android', role: seg($('role')) || 'customer',
+        screen: $('screen').value.trim(), step: $('step').value.trim(),
+        note: $('note').value.trim(), severity: seg($('sev')) || 'wrong',
+        build: $('build').value.trim() || Q.cfg.DEFAULT_BUILD || 'FINAL-PREVIEW-3',
+        screenshot_path: path, screenshot_bytes: blob.size
+      };
+      const res = await client.rpc('submit_finding', body);
+      if (res.error) throw res.error;
+      const num = res.data;
+
+      writeLocal('qa.build', body.build); writeLocal('qa.tester', tester); writeLocal('qa.passcode', passcode);
+      mine.unshift({ num, createdAt: new Date().toISOString(), tester, phone: body.phone, role: body.role, screen: body.screen, step: body.step,
+        note: body.note, severity: body.severity, build: body.build, status: 'open', screenshot_path: path });
+      mine = mine.slice(0, 300); writeLocal('qa.mine', JSON.stringify(mine));
+      clearForm(true); render();
+      setStatus('Saved as finding #' + num + '.');
+    } catch (err) {
+      const msg = String((err && err.message) || '');
+      if (/invalid_passcode/.test(msg)) { writeLocal('qa.passcode', null); }
+      setStatus(plain(err, 'Could not save'), true);
+      updateSave();
+    }
+  });
+
+  // ---------- list (this browser only)
+  $('filters').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    const v = b.dataset.f.split(':')[1];
+    filter.phone = (filter.phone === v) ? null : v;
+    $('filters').querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.f === 'phone:' + filter.phone)));
+    render();
+  });
+  $('forgetBtn').addEventListener('click', e => {
+    const b = e.currentTarget;
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Really forget?'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Forget this list'; }, 4000); return; }
+    mine = []; writeLocal('qa.mine', null); b.dataset.armed = ''; b.textContent = 'Forget this list'; render();
+  });
+
+  function render(){
+    const list = $('list'), empty = $('empty');
+    $('counts').innerHTML = '<span class="pill now">' + mine.length + ' saved from this phone</span>' + (Q.configured() ? '' : '<span class="pill bad">not switched on yet</span>');
+    const rows = mine.filter(d => !filter.phone || d.phone === filter.phone);
+    list.querySelectorAll('.card').forEach(c => c.remove());
+    empty.hidden = rows.length > 0;
+    if (mine.length > 0 && rows.length === 0) empty.innerHTML = '<b>Nothing matches this filter.</b><span>Tap the phone chip again to see everything.</span>';
+    else if (mine.length === 0) empty.innerHTML = '<b>No findings yet.</b><span>The first one you save appears here, newest first.</span>';
+    const frag = document.createDocumentFragment();
+    for (const d of rows) frag.appendChild(card(d));
+    list.appendChild(frag);
+  }
+
+  function card(d){
+    const el = document.createElement('article');
+    el.className = 'card'; el.dataset.num = d.num;
+    const src = publicUrl(d.screenshot_path);
+    el.innerHTML =
+      '<div class="shot" data-act="zoom">' + (src ? '<img src="' + esc(src) + '" alt="Screenshot for finding ' + esc(d.num) + '" loading="lazy">' : '<div class="none">No screenshot</div>') + '</div>' +
+      '<div class="body">' +
+        '<div class="head"><span class="num">#' + esc(d.num) + '</span><span class="screen">' + esc(d.screen || 'Screen not named') + '</span>' + pill(SEV, d.severity) + pill(STATUS, d.status) + '</div>' +
+        '<div class="meta"><span>' + esc(PHONE[d.phone] || d.phone) + '</span><span>' + esc(ROLE[d.role] || d.role || '') + '</span>' + (d.step ? '<span>step ' + esc(d.step) + '</span>' : '') + '<span>' + esc(d.build || '') + '</span><span>' + esc(when(d.createdAt)) + '</span></div>' +
+        '<div class="note">' + esc(d.note) + '</div>' +
+      '</div>';
+    return el;
+  }
+
+  $('list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-act="zoom"]'); if (!btn) return;
+    const el = btn.closest('.card'); const d = mine.find(x => String(x.num) === el.dataset.num); if (!d || !d.screenshot_path) return;
+    openLight(publicUrl(d.screenshot_path), '#' + d.num + ' · ' + (d.screen || '') + ' · ' + (PHONE[d.phone] || ''));
+  });
+
+  function openLight(src, cap){ $('lightImg').src = src; $('lightCap').textContent = cap; $('lightbox').hidden = false; }
+  $('lightbox').addEventListener('click', () => { $('lightbox').hidden = true; $('lightImg').removeAttribute('src'); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('lightbox').hidden) $('lightbox').click(); });
+
+  // ---------- boot
+  render(); updateSave();
+  if (!Q.configured()) notice('This page is not switched on yet: config.js still has the placeholder project URL and key.');
+  else if (!window.supabase) notice('The Supabase library did not load. Check the connection and reload.', true);
+})();
+</script>
+</body>
+</html>

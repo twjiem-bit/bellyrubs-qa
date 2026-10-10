@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Bellyrubs Screen Tests · Admin</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="qa.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="qa-shared.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Bellyrubs · screen-by-screen testing · admin view</span>
+    <h1>Bellyrubs Screen Tests</h1>
+    <p>Every tester's findings, newest first. Edit, mark fixed, reply, delete. The list refreshes itself every minute.</p>
+    <div class="counts" id="counts"><span class="pill now">Locked</span></div>
+  </header>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <form class="entry gate" id="gate" autocomplete="off">
+    <h2>Admin passcode</h2>
+    <label class="f">Passcode<input type="password" id="passcode" placeholder="from the founder" autocomplete="off"></label>
+    <div class="actions">
+      <button type="submit" class="btn primary" id="openBtn">Open the list</button>
+      <span class="status" id="gateStatus" role="status"></span>
+    </div>
+  </form>
+
+  <section id="main" style="display:grid;gap:14px" hidden>
+    <div class="toolbar">
+      <h2>Findings</h2>
+      <div class="filters" id="filters">
+        <button type="button" class="chip" data-f="status:open" aria-pressed="true">Open</button>
+        <button type="button" class="chip" data-f="status:fixed" aria-pressed="false">Fixed</button>
+        <button type="button" class="chip" data-f="status:all" aria-pressed="false">All</button>
+        <span style="width:6px"></span>
+        <button type="button" class="chip" data-f="phone:android" aria-pressed="false">Android</button>
+        <button type="button" class="chip" data-f="phone:iphone" aria-pressed="false">iPhone</button>
+      </div>
+      <div class="right">
+        <span class="status" id="listStatus" role="status"></span>
+        <button type="button" class="btn quiet" id="refreshBtn">Refresh</button>
+        <button type="button" class="btn quiet" id="lockBtn" title="Forget the passcode on this device">Lock</button>
+      </div>
+    </div>
+    <div class="list" id="list">
+      <div class="empty" id="empty"><b>No findings yet.</b><span>Testers' entries appear here, newest first.</span></div>
+    </div>
+  </section>
+</div>
+
+<div class="lightbox" id="lightbox" hidden><img id="lightImg" alt="Screenshot, full size"><div class="cap" id="lightCap"></div></div>
+
+<script>
+(function(){
+  'use strict';
+  const Q = window.QA;
+  const { $, SEV, STATUS, PHONE, ROLE, esc, when, pill, readLocal, writeLocal, publicUrl, plain } = Q;
+
+  let passcode = readLocal('qa.admin') || '';
+  let docs = [];
+  let filter = { status: 'open', phone: null };
+  let timer = null, loading = false;
+
+  function notice(msg, bad){ const n = $('notice'); n.textContent = msg || ''; n.hidden = !msg; n.classList.toggle('bad', !!bad); }
+  function gateStatus(msg, bad){ const s = $('gateStatus'); s.textContent = msg || ''; s.classList.toggle('bad', !!bad); }
+  function listStatus(msg, bad){ const s = $('listStatus'); s.textContent = msg || ''; s.classList.toggle('bad', !!bad); }
+  function editing(){ return !!$('list').querySelector('.card .edit'); }
+
+  // ---------- the gate
+  function lock(msg){
+    passcode = ''; writeLocal('qa.admin', null); docs = [];
+    if (timer) { clearInterval(timer); timer = null; }
+    $('main').hidden = true; $('gate').hidden = false; $('passcode').value = '';
+    $('counts').innerHTML = '<span class="pill now">Locked</span>';
+    gateStatus(msg || '', !!msg);
+  }
+  function unlock(){
+    $('gate').hidden = true; $('main').hidden = false;
+    if (!timer) timer = setInterval(() => { if (!editing() && document.visibilityState === 'visible') load(true); }, 60000);
+  }
+  $('gate').addEventListener('submit', async e => {
+    e.preventDefault();
+    const given = $('passcode').value.trim();
+    if (!given) { gateStatus('Type the admin passcode first.', true); $('passcode').focus(); return; }
+    if (!Q.getClient()) { gateStatus(Q.configured() ? 'The page could not start (no Supabase library). Reload once.' : 'This page is not switched on yet: config.js has no project URL and key.', true); return; }
+    passcode = given;
+    $('openBtn').disabled = true; gateStatus('Checking…');
+    const ok = await load(false);
+    $('openBtn').disabled = false;
+    if (ok) { writeLocal('qa.admin', passcode); gateStatus(''); unlock(); }
+  });
+  $('lockBtn').addEventListener('click', () => lock(''));
+  $('refreshBtn').addEventListener('click', () => load(false));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !$('main').hidden && !editing()) load(true); });
+
+  // ---------- loading
+  async function load(quiet){
+    const client = Q.getClient(); if (!client || !passcode) return false;
+    if (loading) return false; loading = true;
+    if (!quiet) listStatus('Loading…');
+    try {
+      const res = await client.rpc('list_findings', { admin_passcode: passcode });
+      if (res.error) throw res.error;
+      docs = Array.isArray(res.data) ? res.data : [];
+      if (!editing()) render();
+      listStatus('Updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+      return true;
+    } catch (err) {
+      const msg = String((err && err.message) || '');
+      if (/invalid_passcode|passcode_not_set/.test(msg)) { lock(plain(err)); return false; }
+      if ($('main').hidden) gateStatus(plain(err, 'Could not open the list'), true); else listStatus(plain(err, 'Could not refresh'), true);
+      return false;
+    } finally { loading = false; }
+  }
+
+  // ---------- list
+  $('filters').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    const [k, v] = b.dataset.f.split(':');
+    if (k === 'status') { filter.status = v; $('filters').querySelectorAll('[data-f^="status:"]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }
+    else { filter.phone = (filter.phone === v) ? null : v; $('filters').querySelectorAll('[data-f^="phone:"]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.f === 'phone:' + filter.phone))); }
+    render();
+  });
+
+  function visible(d){
+    if (filter.status === 'open' && d.status !== 'open') return false;
+    if (filter.status === 'fixed' && d.status !== 'fixed') return false;
+    if (filter.phone && d.phone !== filter.phone) return false;
+    return true;
+  }
+
+  function render(){
+    const list = $('list'), empty = $('empty');
+    const open = docs.filter(d => d.status === 'open').length, fixed = docs.filter(d => d.status === 'fixed').length;
+    $('counts').innerHTML = '<span class="pill now">' + open + ' open</span><span class="pill ok">' + fixed + ' fixed</span><span>' + docs.length + ' in all</span>';
+    const rows = docs.filter(visible).sort((a, b) => (Number(b.num) || 0) - (Number(a.num) || 0));
+    list.querySelectorAll('.card').forEach(c => c.remove());
+    empty.hidden = rows.length > 0;
+    if (docs.length > 0 && rows.length === 0) empty.innerHTML = '<b>Nothing matches this filter.</b><span>Switch to All to see every finding.</span>';
+    else if (docs.length === 0) empty.innerHTML = '<b>No findings yet.</b><span>Testers\' entries appear here, newest first.</span>';
+    const frag = document.createDocumentFragment();
+    for (const d of rows) frag.appendChild(card(d));
+    list.appendChild(frag);
+  }
+
+  function card(d){
+    const el = document.createElement('article');
+    el.className = 'card' + (d.status === 'fixed' ? ' fixed' : ''); el.dataset.id = d.id;
+    const src = publicUrl(d.screenshot_path);
+    el.innerHTML =
+      '<div class="shot" data-act="zoom">' + (src ? '<img src="' + esc(src) + '" alt="Screenshot for finding ' + esc(d.num) + '" loading="lazy">' : '<div class="none">No screenshot</div>') + '</div>' +
+      '<div class="body">' +
+        '<div class="head"><span class="num">#' + esc(d.num) + '</span><span class="screen">' + esc(d.screen || 'Screen not named') + '</span>' + pill(SEV, d.severity) + pill(STATUS, d.status) + '</div>' +
+        '<div class="meta"><span class="who">' + esc(d.tester || '') + '</span><span>' + esc(PHONE[d.phone] || d.phone || '') + '</span><span>' + esc(ROLE[d.role] || d.role || '') + '</span>' + (d.step ? '<span>step ' + esc(d.step) + '</span>' : '') + '<span>' + esc(d.build || '') + '</span><span>' + esc(when(d.created_at)) + '</span></div>' +
+        '<div class="note">' + esc(d.note) + '</div>' +
+        (d.reply ? '<div class="note reply"><b>Cowork:</b> ' + esc(d.reply) + '</div>' : '') +
+        '<div class="foot">' +
+          (d.status === 'open' ? '<button type="button" class="btn quiet" data-act="fixed">Mark fixed</button>' : '<button type="button" class="btn quiet" data-act="reopen">Reopen</button>') +
+          '<button type="button" class="btn quiet" data-act="edit">Edit</button>' +
+          '<button type="button" class="btn quiet danger" data-act="delete">Delete</button>' +
+        '</div>' +
+      '</div>';
+    return el;
+  }
+
+  async function change(id, fields){
+    const client = Q.getClient(); if (!client) return;
+    const res = await client.rpc('update_finding', Object.assign({ admin_passcode: passcode, id, screen: null, step: null, note: null, severity: null, status: null, reply: null }, fields));
+    if (res.error) throw res.error;
+    const row = Array.isArray(res.data) ? res.data[0] : res.data;
+    if (row) { const i = docs.findIndex(x => x.id === id); if (i >= 0) docs[i] = row; }
+    render();
+  }
+
+  $('list').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const el = btn.closest('.card'); const d = docs.find(x => x.id === el.dataset.id); if (!d) return;
+    const act = btn.dataset.act;
+    if (act === 'zoom') { if (d.screenshot_path) openLight(publicUrl(d.screenshot_path), '#' + d.num + ' · ' + (d.screen || '') + ' · ' + (PHONE[d.phone] || '') + ' · ' + (d.tester || '')); return; }
+    try {
+      if (act === 'fixed') await change(d.id, { status: 'fixed' });
+      else if (act === 'reopen') await change(d.id, { status: 'open' });
+      else if (act === 'delete') {
+        if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Really delete?'; setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Delete'; }, 4000); return; }
+        const client = Q.getClient();
+        const res = await client.rpc('delete_finding', { admin_passcode: passcode, id: d.id });
+        if (res.error) throw res.error;
+        docs = docs.filter(x => x.id !== d.id); render();
+      }
+      else if (act === 'edit') editCard(el, d);
+      else if (act === 'cancel') render();
+      else if (act === 'save') {
+        const body = el.querySelector('.body');
+        btn.disabled = true;
+        await change(d.id, {
+          screen: body.querySelector('[data-e=screen]').value.trim(), note: body.querySelector('[data-e=note]').value.trim(),
+          step: body.querySelector('[data-e=step]').value.trim(), severity: body.querySelector('[data-e=sev]').value, status: body.querySelector('[data-e=status]').value,
+          reply: body.querySelector('[data-e=reply]').value.trim()
+        });
+      }
+    } catch (err) {
+      const msg = String((err && err.message) || '');
+      if (/invalid_passcode|passcode_not_set/.test(msg)) { lock(plain(err)); return; }
+      notice(plain(err, 'That change did not save'), true); setTimeout(() => notice(''), 6000);
+      if (act === 'save') { const b = el.querySelector('[data-act=save]'); if (b) b.disabled = false; }
+    }
+  });
+
+  function editCard(el, d){
+    const body = el.querySelector('.body');
+    body.innerHTML = '<div class="edit">' +
+      '<div class="meta"><span class="who">' + esc(d.tester || '') + '</span><span>' + esc(PHONE[d.phone] || d.phone || '') + '</span><span>' + esc(ROLE[d.role] || d.role || '') + '</span><span>' + esc(d.build || '') + '</span></div>' +
+      '<label class="f">Screen<input type="text" data-e="screen" value="' + esc(d.screen) + '"></label>' +
+      '<div class="row"><label class="f">Step<input type="text" data-e="step" value="' + esc(d.step) + '"></label>' +
+      '<label class="f">How bad<select data-e="sev">' + Object.keys(SEV).map(k => '<option value="' + k + '"' + (k === d.severity ? ' selected' : '') + '>' + SEV[k][0] + '</option>').join('') + '</select></label></div>' +
+      '<label class="f">What is wrong<textarea data-e="note">' + esc(d.note) + '</textarea></label>' +
+      '<label class="f">Status<select data-e="status">' + Object.keys(STATUS).map(k => '<option value="' + k + '"' + (k === d.status ? ' selected' : '') + '>' + STATUS[k][0] + '</option>').join('') + '</select></label>' +
+      '<label class="f">Cowork reply<textarea data-e="reply" style="min-height:70px" placeholder="What was done about it, or a question back to the tester">' + esc(d.reply) + '</textarea></label>' +
+      '<div class="foot"><button type="button" class="btn primary" data-act="save">Save changes</button><button type="button" class="btn quiet" data-act="cancel">Cancel</button></div>' +
+      '</div>';
+  }
+
+  function openLight(src, cap){ $('lightImg').src = src; $('lightCap').textContent = cap; $('lightbox').hidden = false; }
+  $('lightbox').addEventListener('click', () => { $('lightbox').hidden = true; $('lightImg').removeAttribute('src'); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('lightbox').hidden) $('lightbox').click(); });
+
+  // ---------- boot
+  if (!Q.configured()) notice('This page is not switched on yet: config.js still has the placeholder project URL and key.');
+  else if (!window.supabase) notice('The Supabase library did not load. Check the connection and reload.', true);
+  if (passcode && Q.getClient()) {
+    $('gate').hidden = true; $('main').hidden = false; $('counts').innerHTML = '<span class="pill now">Loading…</span>';
+    load(false).then(ok => { if (ok) unlock(); else if (passcode) { /* network error: keep the list view, status shows why */ } });
+  } else {
+    passcode = '';
+    $('gate').hidden = false; $('main').hidden = true;
+  }
+})();
+</script>
+</body>
+</html>

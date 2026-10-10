@@ -1,0 +1,25 @@
+{
+  "name": "bellyrubs-qa-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "qa.bellyrubs.co.in — the public screen-by-screen testing page for the Bellyrubs final-preview builds (static site + its own Supabase project).",
+  "type": "module",
+  "scripts": {
+    "export": "node scripts/export-findings.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "test": "npm run check && npm run test:schema && npm run test:pages",
+    "test:schema": "node --test tests/schema.test.mjs",
+    "test:pages": "node --test tests/pages.test.mjs",
+    "serve": "node tests/static-server.mjs 8787"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.117.2"
+  },
+  "devDependencies": {
+    "pg": "8.23.1",
+    "playwright": "1.64.0"
+  }
+}
